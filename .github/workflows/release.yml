@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: target/release/git-clean
+            asset_name: git-clean-linux-x86_64
+          - os: macos-latest
+            artifact: target/release/git-clean
+            asset_name: git-clean-macos-aarch64
+          - os: windows-latest
+            artifact: target/release/git-clean.exe
+            asset_name: git-clean-windows-x86_64.exe
+
+    runs-on: ${{ matrix.os }}
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Extract version
+        shell: bash
+        run: |
+          version="${{ github.event.release.tag_name }}"
+          version="${version#v}"
+          cargo install cargo-edit --locked
+          cargo set-version "$version"
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp ${{ matrix.artifact }} ${{ matrix.asset_name }}
+          gh release upload ${{ github.event.release.tag_name }} ${{ matrix.asset_name }} --clobber
