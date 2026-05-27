@@ -1,0 +1,16 @@
+[package]
+name = "git-clean"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+bytesize = "2.3"
+console = "0.16"
+ctrlc = "3.5"
+ignore = "0.4"
+clap = { version = "4.6", features = ["derive"] }
+git2 = "0.21"
+dialoguer = "0.12"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
