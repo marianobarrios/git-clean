@@ -1,5 +1,7 @@
 # git-clean
 
+[![CI](https://github.com/marianobarrios/git-clean/actions/workflows/ci.yml/badge.svg)](https://github.com/marianobarrios/git-clean/actions/workflows/ci.yml)
+
 **git-clean** recursively scans a directory tree for Git repositories and removes files that Git considers untracked or repo-locally ignored — build artifacts, generated files, editor noise, and the like.
 
 ## How it works
