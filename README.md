@@ -32,12 +32,12 @@ cargo run --release -- [OPTIONS] [ROOT]
 git-clean [OPTIONS] [ROOT]
 ```
 
-| Argument / Option    | Description |
-|----------------------|-------------|
-| `[ROOT]`             | Root directory to search (default: current directory) |
-| `--execute`          | Actually delete files. Without this flag the tool is a no-op dry-run |
-| `-y, --yes`          | Skip the confirmation prompt when `--execute` is set |
-| `-v, --verbose`      | Increase log verbosity (`-v` = info, `-vv` = debug, `-vvv` = trace) |
+| Argument / Option | Description                                                          |
+|-------------------|----------------------------------------------------------------------|
+| `[BASE_DIR]`      | Base directory to search (default: current directory)                |
+| `--execute`       | Actually delete files. Without this flag the tool is a no-op dry-run |
+| `-y, --yes`       | Skip the confirmation prompt when `--execute` is set                 |
+| `-v, --verbose`   | Increase log verbosity (`-v` = info, `-vv` = debug, `-vvv` = trace)  |
 
 ### Examples
 

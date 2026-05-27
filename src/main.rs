@@ -31,8 +31,8 @@ other repo-specific noise. Files matching ONLY the repo gitignore are candidates
   git-clean --execute -y     delete without prompting"
 )]
 struct Args {
-    /// Root directory to search (default: current directory)
-    root: Option<PathBuf>,
+    /// Base directory to search (default: current directory)
+    base_dir: Option<PathBuf>,
 
     /// Actually delete files. Without this flag the tool is a no-op dry-run.
     #[arg(long)]
@@ -78,7 +78,8 @@ fn main() -> Result<()> {
         info!("no global gitignore found — all repo-ignored files are candidates for removal");
     }
 
-    let root_path = args.root.unwrap_or_else(|| env::current_dir().expect("cannot get current directory"));
+    let root_path =
+        args.base_dir.unwrap_or_else(|| env::current_dir().expect("cannot get current directory"));
     let root_path =
         root_path.canonicalize().with_context(|| format!("cannot open directory {}", root_path.display()))?;
 
@@ -92,7 +93,11 @@ fn main() -> Result<()> {
         println!("{}", style("No Git repositories found.").yellow());
         return Ok(());
     }
-    println!("Found {} Git {}.", style(repos.len()).bold(), if repos.len() == 1 { "repository" } else { "repositories" });
+    println!(
+        "Found {} Git {}.",
+        style(repos.len()).bold(),
+        if repos.len() == 1 { "repository" } else { "repositories" }
+    );
 
     let groups = collect_all_for_deletion(&repos)?;
     let all_paths: Vec<PathBuf> =
