@@ -23,7 +23,9 @@ Two layers of gitignore rules are in play:\n\
 lists patterns to be ignored in every repository, usually IDE metadata, OS noise, etc. Files \
 matching the global gitignore are PROTECTED and will NOT be removed.\n\
   - Each repository's own .gitignore usually lists build artifacts, generated files, and \
-other repo-specific noise. Files matching ONLY the repo gitignore are candidates for removal.",
+other repo-specific noise. Files matching ONLY the repo gitignore are candidates for removal.\n\n\
+Symbolic links to directories are not traversed, but a symlink that points directly to a Git \
+repository root is recognised and included.",
     after_help = "EXAMPLES:
   git-clean                  dry-run from current directory
   git-clean ~/projects       dry-run across all repos under ~/projects
@@ -103,8 +105,6 @@ fn main() -> Result<()> {
     let all_paths: Vec<PathBuf> =
         groups.iter().flat_map(|(repo, paths)| paths.iter().map(|p| repo.join(p))).collect();
 
-    let size = ByteSize(all_paths.iter().map(|p| dir_size(p)).sum());
-
     if all_paths.is_empty() {
         println!("{}", style("No paths for deletion.").dim());
         return Ok(());
@@ -128,6 +128,11 @@ fn main() -> Result<()> {
         }
     }
 
+    let mut total_size = ByteSize::default();
+    for path in &all_paths {
+        total_size += ByteSize(dir_size(path)?);
+    }
+
     if args.execute {
         if !args.yes {
             let confirm = Confirm::new().with_prompt("Proceed with deletion?").default(false);
@@ -136,13 +141,15 @@ fn main() -> Result<()> {
                 return Ok(());
             }
         }
-        delete_paths(&all_paths);
-        println!("{} item(s) removed — {}", style(all_paths.len()).green().bold(), style(size).blue());
+        for path in &all_paths {
+            delete_path(path)?;
+        }
+        println!("{} item(s) removed — {}", style(all_paths.len()).green().bold(), style(total_size).blue());
     } else {
         println!(
             "{} item(s) would be removed — {}. Pass {} to actually delete them.",
             style(all_paths.len()).yellow().bold(),
-            style(size).blue(),
+            style(total_size).blue(),
             style("--execute").bold(),
         );
     }
@@ -179,46 +186,70 @@ fn collect_all_for_deletion(repos: &[PathBuf]) -> Result<Vec<(PathBuf, Vec<PathB
     Ok(groups)
 }
 
-/// Walk the filesystem looking for Git repertoires, using `Repository::open` to validate each
-/// directory.
+/// Walk the filesystem looking for Git repositories, using `Repository::open` to validate each
+/// directory. Symlinks to directories are not traversed, but a symlink that points directly to a
+/// Git repository root is recognized and included.
 fn find_git_repos(root: &Path) -> Result<Vec<PathBuf>> {
     let mut repos = Vec::new();
     let mut stack = vec![root.to_path_buf()];
-
     while let Some(dir) = stack.pop() {
         trace!("scanning {}", dir.display());
-        if let Ok(repo) = Repository::open(&dir) {
-            if repo.is_bare() {
-                debug!("skipping bare repo: {}", dir.display());
-            } else {
-                repos.push(dir);
-            }
+        if is_non_bare_git_repo(&dir) {
+            repos.push(dir);
         } else {
-            let entries =
-                fs::read_dir(&dir).with_context(|| format!("cannot read directory {}", dir.display()))?;
-            for entry in entries.filter_map(|e| e.ok()) {
-                if entry.file_type().with_context(|| format!("cannot get file type of {:?}", entry))?.is_dir()
-                {
-                    stack.push(entry.path());
+            for dir_entry in
+                fs::read_dir(&dir).with_context(|| format!("cannot read directory {}", dir.display()))?
+            {
+                let dir_entry = dir_entry?;
+                let file_type = dir_entry
+                    .file_type()
+                    .with_context(|| format!("cannot get file type of {:?}", dir_entry))?;
+                if file_type.is_dir() {
+                    stack.push(dir_entry.path());
+                } else if file_type.is_symlink() {
+                    // Don't recurse through the symlink, but do check if it points to a repo.
+                    let path = dir_entry.path();
+                    if is_non_bare_git_repo(&path) {
+                        repos.push(path);
+                    } else {
+                        trace!("skipping non-repo at {}", path.display());
+                    }
                 }
             }
         }
     }
-
     repos.sort();
     Ok(repos)
 }
 
-fn dir_size(path: &Path) -> u64 {
-    if let Ok(meta) = path.symlink_metadata() {
-        if meta.is_file() || meta.file_type().is_symlink() {
-            return meta.len();
+fn is_non_bare_git_repo(path: &Path) -> bool {
+    match Repository::open(path) {
+        Ok(repo) if !repo.is_bare() => true,
+        Ok(_) => {
+            debug!("skipping bare repo: {}", path.display());
+            false
         }
-        if let Ok(entries) = fs::read_dir(path) {
-            return entries.filter_map(|e| e.ok()).map(|e| dir_size(&e.path())).sum();
+        Err(_) => false,
+    }
+}
+
+/// Calculate the total recursive size of a directory, does not follow symlinks
+fn dir_size(path: &Path) -> Result<u64> {
+    let meta = path.symlink_metadata()?;
+    if meta.is_file() || meta.file_type().is_symlink() {
+        return Ok(meta.len());
+    }
+    let mut total = 0;
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            total += dir_size(&entry.path())?;
+        } else {
+            total += entry.path().symlink_metadata()?.len();
         }
     }
-    0
+    Ok(total)
 }
 
 /// Returns paths inside `repo` that are candidates for removal.
@@ -260,11 +291,16 @@ fn to_path(entry: StatusEntry) -> (PathBuf, bool) {
     (PathBuf::from(path), is_dir)
 }
 
-fn delete_paths(paths: &[PathBuf]) {
-    for path in paths {
-        info!("deleting {}", path.display());
-        if let Err(e) = if path.is_dir() { fs::remove_dir_all(path) } else { fs::remove_file(path) } {
-            warn!("failed to delete {}: {}", path.display(), e);
-        }
+/// Deletes a path, recursively if it is a directory. Does not follow symlinks.
+fn delete_path(path: &Path) -> Result<()> {
+    info!("deleting {}", path.display());
+    let is_dir = path
+        .symlink_metadata()
+        .with_context(|| format!("cannot stat {}", path.display()))?
+        .file_type()
+        .is_dir();
+    if let Err(e) = if is_dir { fs::remove_dir_all(path) } else { fs::remove_file(path) } {
+        warn!("failed to delete {}: {}", path.display(), e);
     }
+    Ok(())
 }
